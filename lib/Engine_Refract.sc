@@ -7,7 +7,7 @@ Engine_Refract : CroneEngine {
   var <bus;
   var <groups;
   var <operators;
-  var pulseResponder;
+  var <fftBuf;
   
   *new { arg context, doneCallback;
     ^super.new(context, doneCallback);
@@ -215,6 +215,9 @@ Engine_Refract : CroneEngine {
     // Wait for SynthDefs to be built
     context.server.sync;
     
+    // Create FFT buffer for analysis
+    fftBuf = Buffer.alloc(context.server, 1024);
+    
     // Create main synth voice
     synths[\voice] = Synth.new(\fm_voice, [
       \out, bus[\fx].index,
@@ -268,6 +271,11 @@ Engine_Refract : CroneEngine {
       // If synth exists, update it
       if(synths[\voice].notNil, {
         synths[\voice].set(param, value);
+      });
+      
+      // If drone synth exists, update it too
+      if(synths[\drone].notNil, {
+        synths[\drone].set(param, value);
       });
     });
     
@@ -367,25 +375,68 @@ Engine_Refract : CroneEngine {
           \reflection, params[\reflection]
         );
       });
+      
+      // Update drone synth if it exists
+      if(synths[\drone].notNil, {
+        synths[\drone].set(
+          \harmonic, params[\harmonic],
+          \orbital, params[\orbital] * 0.5,
+          \symmetry, params[\symmetry],
+          \resonance, params[\resonance] * 0.8,
+          \radiance, params[\radiance] * 0.5,
+          \flow, params[\flow] * 2,
+          \propagation, params[\propagation],
+          \reflection, params[\reflection]
+        );
+      });
     });
     
-    // Register a polling function to send spectral data back to Lua
+    // SynthDef for spectral analysis
+    SynthDef(\spectral_analyzer, {
+      arg in, out, fftbuf;
+      var sig, chain, centroid;
+      
+      sig = Mix.ar(In.ar(in, 2));
+      chain = FFT(fftbuf, sig);
+      centroid = SpecCentroid.kr(chain);
+      
+      // Send centroid value to a control bus
+      Out.kr(out, centroid.explin(20, 20000, 0, 1));
+    }).add;
+    
+    // Create analysis synth and control bus
+    bus[\analysis] = Bus.control(context.server, 1);
+    context.server.sync;
+    
+    synths[\analyzer] = Synth.new(\spectral_analyzer, [
+      \in, bus[\fx].index,
+      \out, bus[\analysis].index,
+      \fftbuf, fftBuf
+    ], groups[\fx], \addAfter);
+    
+    // Register polling functions for analysis data
     this.addPoll("spectral_centroid", {
-      // For a proper spectral centroid, we'd need to process the FFT
-      // This is simplified for demonstration purposes
-      var signal = Mix.ar(In.ar(bus[\fx].index, 2));
-      var chain = FFT(LocalBuf(1024), signal);
-      SpecCentroid.kr(chain).explin(20, 20000, 0, 1);
+      var value = 0;
+      if(bus[\analysis].notNil, {
+        value = bus[\analysis].getSynchronous;
+      });
+      value;
     });
     
     this.addPoll("amplitude", {
-      // Return the RMS amplitude of the output
-      var amp = Amplitude.kr(Mix.ar(In.ar(bus[\fx].index, 2)));
-      amp;
+      var value = 0;
+      if(bus[\fx].notNil, {
+        // This is an approximation - a proper implementation would use amplitude analysis
+        value = bus[\fx].getSynchronous.abs.mean;
+      });
+      value;
     });
   }
   
   free {
+    // Free FFT buffer
+    if(fftBuf.notNil, { fftBuf.free; });
+    
     // Free all synths and busses with proper error handling
     synths.keysValuesDo({ arg key, synth; 
       if(synth.notNil, { synth.free; });
@@ -404,5 +455,6 @@ Engine_Refract : CroneEngine {
     bus = nil;
     groups = nil;
     operators = nil;
+    fftBuf = nil;
   }
 }
