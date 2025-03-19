@@ -191,6 +191,35 @@ function Mandala.create_fractal_connections(m)
   end
 end
 
+-- Apply connection pattern based on pattern mode
+function Mandala.apply_pattern(m, pattern_mode)
+  if not m or not m.nodes then
+    print("Error: Invalid mandala object")
+    return
+  end
+  
+  -- Reset connections
+  for i=1,#m.nodes do
+    for j=1,#m.nodes do
+      m.connections[i][j] = 0
+    end
+  end
+  
+  -- Apply selected pattern
+  if pattern_mode == 1 then
+    Mandala.create_radial_connections(m)
+  elseif pattern_mode == 2 then
+    Mandala.create_spiral_connections(m)
+  elseif pattern_mode == 3 then
+    Mandala.create_reflection_connections(m)
+  elseif pattern_mode == 4 then
+    Mandala.create_fractal_connections(m)
+  else
+    print("Error: Unknown pattern mode: " .. tostring(pattern_mode))
+    Mandala.create_radial_connections(m) -- Default to radial
+  end
+end
+
 -- Create a pulse between two nodes
 function Mandala.create_pulse(m, source, target, strength)
   -- Validate input
@@ -269,6 +298,91 @@ function Mandala.update_pulses(m, flow_rate)
   m.active_pulses = new_active_pulses
   
   return completed_source, completed_target, completed_strength
+end
+
+-- Generate tension based on coherence
+function Mandala.generate_coherence_tension(m, coherence)
+  if not m or not m.nodes then
+    print("Error: Invalid mandala object")
+    return
+  end
+  
+  -- Only proceed if not frozen
+  if m.freeze then return end
+  
+  local num_nodes = #m.nodes
+  
+  -- Calculate average value
+  local avg_value = 0
+  for i=1,num_nodes do
+    avg_value = avg_value + m.nodes[i].value
+  end
+  avg_value = avg_value / num_nodes
+  
+  -- Find node furthest from average
+  local max_diff = 0
+  local furthest_node = 1
+  for i=1,num_nodes do
+    local diff = math.abs(m.nodes[i].value - avg_value)
+    if diff > max_diff then
+      max_diff = diff
+      furthest_node = i
+    end
+  end
+  
+  -- Generate pulse from furthest node to target based on coherence
+  local target
+  if coherence > 0.7 then
+    -- High coherence: send toward average (pick node closest to avg)
+    local min_diff = 1
+    local closest_node = 1
+    for i=1,num_nodes do
+      if i ~= furthest_node then
+        local diff = math.abs(m.nodes[i].value - avg_value)
+        if diff < min_diff then
+          min_diff = diff
+          closest_node = i
+        end
+      end
+    end
+    target = closest_node
+  elseif coherence < 0.3 then
+    -- Low coherence: send toward random node
+    target = math.random(num_nodes)
+    while target == furthest_node do
+      target = math.random(num_nodes)
+    end
+  else
+    -- Medium coherence: send to node with strong connection
+    local max_conn = 0
+    for j=1,num_nodes do
+      if j ~= furthest_node and m.connections[furthest_node][j] > max_conn then
+        max_conn = m.connections[furthest_node][j]
+        target = j
+      end
+    end
+  end
+  
+  -- Create pulse with strength based on coherence
+  Mandala.create_pulse(m, furthest_node, target, coherence)
+end
+
+-- Morph between two snapshots
+function Mandala.morph_values(m, start_snapshot, end_snapshot, position)
+  if not m or not m.nodes or not start_snapshot or not end_snapshot then
+    print("Error: Invalid morph parameters")
+    return
+  end
+  
+  -- Ensure position is valid
+  position = math.min(math.max(position or 0, 0), 1)
+  
+  -- Interpolate values
+  for i=1,#m.nodes do
+    if start_snapshot[i] and end_snapshot[i] then
+      m.nodes[i].value = start_snapshot[i] * (1 - position) + end_snapshot[i] * position
+    end
+  end
 end
 
 -- Calculate total energy in the system
@@ -362,3 +476,150 @@ function Mandala.draw(m)
       table.insert(pulse_by_size[size], {x, y})
     end
   end
+  
+  -- Draw pulses grouped by size
+  for size, pulses in pairs(pulse_by_size) do
+    screen.level(15) -- Pulses are always bright
+    for _, pos in ipairs(pulses) do
+      local x, y = pos[1], pos[2]
+      screen.circle(x, y, size)
+      screen.fill()
+    end
+  end
+  
+  -- Prepare nodes by brightness
+  for i=1,#m.nodes do
+    -- Node brightness based on value
+    local brightness = math.floor(m.nodes[i].value * 15)
+    node_by_brightness[brightness] = node_by_brightness[brightness] or {}
+    table.insert(node_by_brightness[brightness], i)
+  end
+  
+  -- Draw nodes grouped by brightness
+  for brightness, nodes in pairs(node_by_brightness) do
+    screen.level(brightness)
+    for _, i in ipairs(nodes) do
+      -- Size based on value and energy
+      local size = CONSTANTS.NODES.MIN_SIZE + 
+                  (CONSTANTS.NODES.MAX_SIZE - CONSTANTS.NODES.MIN_SIZE) * m.nodes[i].value
+      
+      -- Draw node circle
+      screen.circle(m.nodes[i].x, m.nodes[i].y, size)
+      screen.fill()
+    end
+  end
+  
+  -- Draw freeze indicator if system is frozen
+  if m.freeze then
+    screen.level(4)
+    screen.rect(2, 2, 6, 6)
+    screen.fill()
+  end
+end
+
+-- Get snapshot of current parameter values
+function Mandala.get_snapshot(m)
+  if not m or not m.nodes then
+    print("Error: Invalid mandala object")
+    return nil
+  end
+  
+  local snapshot = {}
+  for i=1,#m.nodes do
+    snapshot[i] = m.nodes[i].value
+  end
+  
+  return snapshot
+end
+
+-- Set node values from snapshot
+function Mandala.set_snapshot(m, snapshot)
+  if not m or not m.nodes or not snapshot then
+    print("Error: Invalid set_snapshot parameters")
+    return
+  end
+  
+  for i=1,#m.nodes do
+    if snapshot[i] then
+      m.nodes[i].value = snapshot[i]
+    end
+  end
+end
+
+-- Set freeze state
+function Mandala.set_freeze(m, freeze)
+  if not m then
+    print("Error: Invalid mandala object")
+    return
+  end
+  
+  m.freeze = freeze and true or false
+end
+
+-- Update node value and trigger appropriate pulses
+function Mandala.update_node_value(m, index, value, harmony)
+  if not m or not m.nodes or index < 1 or index > #m.nodes then
+    print("Error: Invalid node update parameters")
+    return
+  end
+  
+  -- Only update if not frozen
+  if m.freeze then return end
+  
+  -- Store old value for calculating change
+  local old_value = m.nodes[index].value
+  
+  -- Update with new value
+  m.nodes[index].value = math.min(math.max(value, 0), 1)
+  
+  -- Calculate change amount
+  local change = math.abs(m.nodes[index].value - old_value)
+  
+  -- Only trigger pulses for significant changes
+  if change > 0.05 then
+    -- Trigger pulses based on connections
+    for j=1,#m.nodes do
+      if j ~= index and m.connections[index][j] > CONSTANTS.CONNECTIONS.MIN_STRENGTH then
+        -- Strength based on connection strength and change amount
+        local strength = m.connections[index][j] * change
+        
+        -- Apply harmony influence to strength
+        if harmony then
+          harmony = math.min(math.max(harmony, 0), 1)
+          strength = strength * (0.5 + harmony * 0.5)
+        end
+        
+        -- Create pulse
+        Mandala.create_pulse(m, index, j, strength)
+      end
+    end
+  end
+end
+
+-- Reset all node values to default
+function Mandala.reset(m)
+  if not m or not m.nodes then
+    print("Error: Invalid mandala object")
+    return
+  end
+  
+  -- Reset node values
+  for i=1,#m.nodes do
+    m.nodes[i].value = 0.5
+  end
+  
+  -- Clear all pulses
+  m.active_pulses = {}
+  for i=1,#m.nodes do
+    for j=1,#m.nodes do
+      m.pulses[i][j] = {
+        active = false,
+        progress = 0,
+        energy = 0,
+        strength = 0
+      }
+    end
+  end
+end
+
+return Mandala
