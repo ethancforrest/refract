@@ -9,6 +9,12 @@
 -- K3: Morph between snapshots
 -- K1+K2: Freeze/unfreeze system
 -- K1+K3: Reset system to defaults
+--
+-- Hold K1 while turning E1: Switch to MIDI mapping page
+-- In MIDI mapping page:
+--   E2: Select parameter
+--   K3: MIDI learn for selected parameter
+--   K1: Return to main page
 
 local UI = require "ui"
 local MusicUtil = require "musicutil"
@@ -34,14 +40,6 @@ local HARMONY_DEFAULT = 0.5
 local COHERENCE_DEFAULT = 0.5
 local MAX_SNAPSHOTS = 4
 
--- Configuration for MIDI CCs
-local MIDI_CC_MAP = {
-  HARMONY = 9,
-  COHERENCE = 10,
-  MORPH = 11,
-  FREEZE = 12
-}
-
 -- State variables
 local mandala
 local params_dirty = false
@@ -60,6 +58,13 @@ local midi_out_device = nil
 local redraw_metro
 local last_time_delta = 1/SCREEN_FRAMERATE
 local last_time = 0
+
+-- MIDI mapping variables
+local pages = {"Main", "MIDI Map"}
+local current_page = 1
+local selected_param = 1
+local midi_learn_active = false
+local midi_learn_target = nil
 
 -- Update engine parameters based on mandala node values
 local function update_engine_parameter(index, value)
@@ -272,19 +277,92 @@ local function reset_system()
   print("System reset to defaults")
 end
 
+-- Start MIDI learn for a parameter
+function start_midi_learn(target_param)
+  midi_learn_active = true
+  midi_learn_target = target_param
+  print("MIDI learn active for " .. target_param)
+end
+
+-- Save MIDI mappings to file
+function save_midi_mappings(filename)
+  local data = {}
+  
+  for i=1, NUM_PARAMS do
+    data["midi_cc_" .. i] = params:get("midi_cc_" .. i)
+  end
+  
+  data.midi_cc_harmony = params:get("midi_cc_harmony")
+  data.midi_cc_coherence = params:get("midi_cc_coherence")
+  data.midi_cc_morph = params:get("midi_cc_morph")
+  data.midi_cc_freeze = params:get("midi_cc_freeze")
+  
+  tab.save(data, filename)
+  print("MIDI mappings saved to " .. filename)
+end
+
+-- Load MIDI mappings from file
+function load_midi_mappings(filename)
+  if util.file_exists(filename) then
+    local data = tab.load(filename)
+    
+    for i=1, NUM_PARAMS do
+      if data["midi_cc_" .. i] then
+        params:set("midi_cc_" .. i, data["midi_cc_" .. i])
+      end
+    end
+    
+    if data.midi_cc_harmony then params:set("midi_cc_harmony", data.midi_cc_harmony) end
+    if data.midi_cc_coherence then params:set("midi_cc_coherence", data.midi_cc_coherence) end
+    if data.midi_cc_morph then params:set("midi_cc_morph", data.midi_cc_morph) end
+    if data.midi_cc_freeze then params:set("midi_cc_freeze", data.midi_cc_freeze) end
+    
+    print("MIDI mappings loaded from " .. filename)
+  else
+    print("MIDI mapping file not found: " .. filename)
+  end
+end
+
 -- Handle encoder interactions
 function enc(n, d)
-  if n == 1 then
-    -- E1: Pattern Mode
-    pattern_mode = util.clamp(pattern_mode + d, 1, #PATTERN_MODES)
-    Mandala.apply_pattern(mandala, pattern_mode)
-    print("Pattern: " .. PATTERN_MODES[pattern_mode])
-  elseif n == 2 then
-    -- E2: Harmony
-    harmony = util.clamp(harmony + d * 0.01, 0, 1)
-  elseif n == 3 then
-    -- E3: Coherence
-    coherence = util.clamp(coherence + d * 0.01, 0, 1)
+  if current_page == 1 then
+    -- Main page encoders
+    if alt_key and n == 1 then
+      -- Switch to MIDI mapping page when holding K1 and turning E1
+      current_page = 2
+      selected_param = 1
+    elseif n == 1 then
+      -- E1: Pattern Mode
+      pattern_mode = util.clamp(pattern_mode + d, 1, #PATTERN_MODES)
+      Mandala.apply_pattern(mandala, pattern_mode)
+      print("Pattern: " .. PATTERN_MODES[pattern_mode])
+    elseif n == 2 then
+      -- E2: Harmony
+      harmony = util.clamp(harmony + d * 0.01, 0, 1)
+    elseif n == 3 then
+      -- E3: Coherence
+      coherence = util.clamp(coherence + d * 0.01, 0, 1)
+    end
+  else
+    -- MIDI mapping page encoders
+    if n == 2 then
+      -- E2: Select parameter
+      local total_params = NUM_PARAMS + 4 -- main params + meta params
+      selected_param = util.clamp(selected_param + d, 1, total_params)
+    elseif n == 3 then
+      -- E3: Manually adjust CC value
+      local param_id
+      if selected_param <= NUM_PARAMS then
+        param_id = "midi_cc_" .. selected_param
+      else
+        local meta_params = {"harmony", "coherence", "morph", "freeze"}
+        param_id = "midi_cc_" .. meta_params[selected_param - NUM_PARAMS]
+      end
+      
+      -- Adjust CC value
+      local current_val = params:get(param_id)
+      params:set(param_id, util.clamp(current_val + d, 0, 127))
+    end
   end
 end
 
@@ -293,21 +371,90 @@ function key(n, z)
   if n == 1 then
     -- K1: Alt modifier
     alt_key = (z == 1)
-  elseif n == 2 and z == 1 then
-    if alt_key then
-      -- K1+K2: Freeze/unfreeze
-      toggle_freeze()
-    else
-      -- K2: Save snapshot
-      save_snapshot()
+    
+    -- Return to main page when pressing K1 on MIDI mapping page
+    if z == 1 and current_page == 2 then
+      current_page = 1
+      midi_learn_active = false
+      midi_learn_target = nil
     end
-  elseif n == 3 and z == 1 then
-    if alt_key then
-      -- K1+K3: Reset system
-      reset_system()
-    else
-      -- K3: Morph between snapshots
+  elseif current_page == 1 then
+    -- Main page keys
+    if n == 2 and z == 1 then
+      if alt_key then
+        -- K1+K2: Freeze/unfreeze
+        toggle_freeze()
+      else
+        -- K2: Save snapshot
+        save_snapshot()
+      end
+    elseif n == 3 and z == 1 then
+      if alt_key then
+        -- K1+K3: Reset system
+        reset_system()
+      else
+        -- K3: Morph between snapshots
+        start_morph()
+      end
+    end
+  else
+    -- MIDI mapping page keys
+    if n == 3 and z == 1 then
+      -- K3: Start MIDI learn for selected parameter
+      if selected_param <= NUM_PARAMS then
+        start_midi_learn(tostring(selected_param))
+      else
+        local meta_params = {"harmony", "coherence", "morph", "freeze"}
+        start_midi_learn(meta_params[selected_param - NUM_PARAMS])
+      end
+    end
+  end
+end
+
+-- Handle MIDI input
+local function midi_event(data)
+  local msg = midi.to_msg(data)
+  
+  if msg.type == "cc" then
+    local cc_num = msg.cc
+    local cc_val = msg.val
+    
+    -- Check if we're in MIDI learn mode
+    if midi_learn_active and midi_learn_target then
+      -- Handle numeric parameter indices
+      if tonumber(midi_learn_target) ~= nil then
+        local param_idx = tonumber(midi_learn_target)
+        params:set("midi_cc_" .. param_idx, cc_num)
+      else
+        -- Handle meta parameters
+        params:set("midi_cc_" .. midi_learn_target, cc_num)
+      end
+      
+      print("Mapped CC " .. cc_num .. " to " .. midi_learn_target)
+      midi_learn_active = false
+      midi_learn_target = nil
+      return
+    end
+    
+    -- Check each parameter for a matching CC
+    for i=1, NUM_PARAMS do
+      if params:get("midi_cc_" .. i) == cc_num then
+        local normalized_val = cc_val / 127
+        Mandala.update_node_value(mandala, i, normalized_val, harmony)
+        update_engine_parameter(i, normalized_val)
+        return
+      end
+    end
+    
+    -- Check meta-parameters
+    if params:get("midi_cc_harmony") == cc_num then
+      harmony = util.clamp(cc_val / 127, 0, 1)
+    elseif params:get("midi_cc_coherence") == cc_num then
+      coherence = util.clamp(cc_val / 127, 0, 1)
+    elseif params:get("midi_cc_morph") == cc_num and cc_val > 64 then
       start_morph()
+    elseif params:get("midi_cc_freeze") == cc_num and cc_val > 64 then
+      toggle_freeze()
     end
   end
 end
@@ -316,75 +463,108 @@ end
 function redraw()
   screen.clear()
   
-  -- Draw mandala visualization
-  Mandala.draw(mandala)
-  
-  -- Draw mode and status 
-  screen.move(2, 8)
-  screen.level(15)
-  screen.text(PATTERN_MODES[pattern_mode])
-  
-  -- Draw harmony level
-  screen.move(2, 62)
-  screen.level(5)
-  screen.text("H")
-  screen.move(10, 62)
-  screen.level(harmony * 15)
-  screen.rect(10, 60, harmony * 20, 2)
-  screen.fill()
-  
-  -- Draw coherence level
-  screen.move(35, 62)
-  screen.level(5)
-  screen.text("C")
-  screen.move(43, 62)
-  screen.level(coherence * 15)
-  screen.rect(43, 60, coherence * 20, 2)
-  screen.fill()
-  
-  -- Draw morph progress if active
-  if morph_active then
-    screen.move(80, 62)
+  if current_page == 1 then
+    -- Draw main page
+    
+    -- Draw mandala visualization
+    Mandala.draw(mandala)
+    
+    -- Draw mode and status 
+    screen.move(2, 8)
     screen.level(15)
-    screen.text("Morph")
-    screen.move(110, 62)
-    screen.rect(110, 60, morph_position * 15, 2)
+    screen.text(PATTERN_MODES[pattern_mode])
+    
+    -- Draw harmony level
+    screen.move(2, 62)
+    screen.level(5)
+    screen.text("H")
+    screen.move(10, 62)
+    screen.level(harmony * 15)
+    screen.rect(10, 60, harmony * 20, 2)
     screen.fill()
+    
+    -- Draw coherence level
+    screen.move(35, 62)
+    screen.level(5)
+    screen.text("C")
+    screen.move(43, 62)
+    screen.level(coherence * 15)
+    screen.rect(43, 60, coherence * 20, 2)
+    screen.fill()
+    
+    -- Draw morph progress if active
+    if morph_active then
+      screen.move(80, 62)
+      screen.level(15)
+      screen.text("Morph")
+      screen.move(110, 62)
+      screen.rect(110, 60, morph_position * 15, 2)
+      screen.fill()
+    end
+    
+    -- Draw snapshot indicator
+    screen.move(125, 8)
+    screen.level(8)
+    screen.text(current_snapshot .. "/" .. MAX_SNAPSHOTS)
+  else
+    -- Draw MIDI mapping page
+    screen.move(64, 8)
+    screen.level(15)
+    screen.text_center("MIDI Mapping")
+    
+    -- Draw parameter list
+    local start_idx = math.max(1, selected_param - 4)
+    for i=0, 6 do
+      local param_idx = start_idx + i
+      if param_idx <= NUM_PARAMS + 4 then
+        local y = 16 + i * 7
+        screen.move(2, y)
+        screen.level(param_idx == selected_param and 15 or 5)
+        
+        -- Parameter name
+        local name
+        if param_idx <= NUM_PARAMS then
+          name = PARAM_NAMES[param_idx]
+        else
+          name = ({"Harmony", "Coherence", "Morph", "Freeze"})[param_idx - NUM_PARAMS]
+        end
+        screen.text(name)
+        
+        -- CC value
+        screen.move(126, y)
+        local cc_val
+        if param_idx <= NUM_PARAMS then
+          cc_val = params:get("midi_cc_" .. param_idx)
+        else
+          local meta_params = {"harmony", "coherence", "morph", "freeze"}
+          cc_val = params:get("midi_cc_" .. meta_params[param_idx - NUM_PARAMS])
+        end
+        
+        screen.text_right(cc_val == 0 and "None" or cc_val)
+      end
+    end
+    
+    -- Instructions
+    screen.move(64, 58)
+    screen.level(4)
+    if midi_learn_active then
+      screen.text_center("Move a MIDI control...")
+    else
+      screen.text_center("K3: MIDI learn")
+    end
   end
-  
-  -- Draw snapshot indicator
-  screen.move(125, 8)
-  screen.level(8)
-  screen.text(current_snapshot .. "/" .. MAX_SNAPSHOTS)
   
   screen.update()
 end
 
--- Handle MIDI input
-local function midi_event(data)
-  local msg = midi.to_msg(data)
-  
-  if msg.type == "cc" then
-    -- Handle control change messages
-    if msg.cc == MIDI_CC_MAP.HARMONY then
-      harmony = util.clamp(msg.val / 127, 0, 1)
-    elseif msg.cc == MIDI_CC_MAP.COHERENCE then
-      coherence = util.clamp(msg.val / 127, 0, 1)
-    elseif msg.cc == MIDI_CC_MAP.MORPH and msg.val > 64 then
-      start_morph()
-    elseif msg.cc == MIDI_CC_MAP.FREEZE and msg.val > 64 then
-      toggle_freeze()
-    elseif msg.cc >= 1 and msg.cc <= NUM_PARAMS then
-      -- Direct parameter control via MIDI CCs 1-8
-      local value = msg.val / 127
-      Mandala.update_node_value(mandala, msg.cc, value, harmony)
-      update_engine_parameter(msg.cc, value)
-    end
-  end
-end
-
 -- Initialize the script
 function init()
+  -- Create data directory if it doesn't exist
+  if not util.file_exists(_path.data.."refract/") then
+    util.make_dir(_path.data.."refract/")
+    print("Made refract data directory")
+  end
+  
   -- Set up parameters
   params:add_separator("Refract Engine")
   
@@ -432,6 +612,37 @@ function init()
     Mandala.set_freeze(mandala, value == 2)
   end)
   
+  -- Add MIDI mapping parameters
+  params:add_separator("MIDI Mapping")
+  
+  for i=1, NUM_PARAMS do
+    local param_name = PARAM_NAMES[i]
+    
+    params:add_number("midi_cc_" .. i, param_name .. " CC", 0, 127, 0, 
+      function(param) return param:get() == 0 and "None" or param:get() end)
+  end
+  
+  -- Also add mappings for meta-parameters
+  params:add_number("midi_cc_harmony", "Harmony CC", 0, 127, 0,
+    function(param) return param:get() == 0 and "None" or param:get() end)
+  params:add_number("midi_cc_coherence", "Coherence CC", 0, 127, 0,
+    function(param) return param:get() == 0 and "None" or param:get() end)
+  params:add_number("midi_cc_morph", "Morph Trigger CC", 0, 127, 0,
+    function(param) return param:get() == 0 and "None" or param:get() end)
+  params:add_number("midi_cc_freeze", "Freeze Toggle CC", 0, 127, 0,
+    function(param) return param:get() == 0 and "None" or param:get() end)
+  
+  -- Add parameter actions for MIDI map save/load
+  params:add_trigger("save_midi_map", "Save MIDI Map")
+  params:set_action("save_midi_map", function()
+    save_midi_mappings(_path.data.."refract/midi_map.json")
+  end)
+  
+  params:add_trigger("load_midi_map", "Load MIDI Map")
+  params:set_action("load_midi_map", function()
+    load_midi_mappings(_path.data.."refract/midi_map.json")
+  end)
+  
   -- Initialize mandala
   mandala = Mandala.new(NUM_PARAMS)
   Mandala.apply_pattern(mandala, pattern_mode)
@@ -475,6 +686,15 @@ function init()
   for i=1,NUM_PARAMS do
     update_engine_parameter(i, mandala.nodes[i].value)
   end
+  
+  -- Try to load saved MIDI mappings
+  if util.file_exists(_path.data.."refract/midi_map.json") then
+    load_midi_mappings(_path.data.."refract/midi_map.json")
+  end
+  
+  -- Print instructions
+  print("Refract initialized!")
+  print("Hold K1 and turn E1 to access MIDI mapping page")
 end
 
 -- Clean up when script is stopped
