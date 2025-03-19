@@ -28,16 +28,37 @@ Engine_Refract : CroneEngine {
     // Create busses for audio routing
     bus[\fx] = Bus.audio(context.server, 2);
     
+    // Define parameter ranges for validation
+    var paramRanges = Dictionary.new;
+    paramRanges[\harmonic] = [20, 120];    // MIDI note range
+    paramRanges[\orbital] = [0.25, 4];     // Beats
+    paramRanges[\symmetry] = [0, 1];       // Normalized
+    paramRanges[\resonance] = [0, 1];      // Normalized
+    paramRanges[\radiance] = [0, 1];       // Normalized
+    paramRanges[\flow] = [0.25, 4];        // Beats
+    paramRanges[\propagation] = [0, 1];    // Normalized
+    paramRanges[\reflection] = [0, 1];     // Normalized
+    
     // Initialize parameters with default values
-    params[\harmonic] = 60;   // Harmonic center (MIDI note)
-    params[\orbital] = 1;     // Orbital period (in beats)
-    params[\symmetry] = 0.5;  // Symmetry (0-1)
-    params[\resonance] = 0.3; // Resonance (0-1)
-    params[\radiance] = 0.5;  // Radiance (0-1)
-    params[\flow] = 1;        // Flow rate (in beats)
-    params[\propagation] = 0.4; // Propagation (0-1)
-    params[\reflection] = 0.3;  // Reflection (0-1)
-    params[\freeze] = 0;        // Freeze (0 or 1)
+    params[\harmonic] = 60;        // Harmonic center (MIDI note)
+    params[\orbital] = 1;          // Orbital period (in beats)
+    params[\symmetry] = 0.5;       // Symmetry (0-1)
+    params[\resonance] = 0.3;      // Resonance (0-1)
+    params[\radiance] = 0.5;       // Radiance (0-1)
+    params[\flow] = 1;             // Flow rate (in beats)
+    params[\propagation] = 0.4;    // Propagation (0-1)
+    params[\reflection] = 0.3;     // Reflection (0-1)
+    params[\freeze] = 0;           // Freeze (0 or 1)
+    
+    // Helper function to clamp values to valid ranges
+    var clampValue = { |param, value|
+      var range = paramRanges[param];
+      if(range.notNil, {
+        value.clip(range[0], range[1]);
+      }, {
+        value;
+      });
+    };
     
     // FM operator setup (in a mandala-like arrangement)
     6.do { |i|
@@ -153,6 +174,9 @@ Engine_Refract : CroneEngine {
         doneAction: 2
       );
       
+      // Apply gentle limiting to prevent extreme values
+      sig = Limiter.ar(sig, 0.95);
+      
       // Output with stereo spread based on reflection
       Out.ar(out, Pan2.ar(sig * env * amp, reflection * 2 - 1));
     }).add;
@@ -181,6 +205,9 @@ Engine_Refract : CroneEngine {
       
       // Mix dry and wet signals
       sig = (sig * (1-mix)) + (wet * mix);
+      
+      // Apply gentle limiting to prevent extreme values
+      sig = Limiter.ar(sig, 0.95);
       
       Out.ar(out, sig);
     }).add;
@@ -213,24 +240,48 @@ Engine_Refract : CroneEngine {
     this.addCommand("controlParam", "if", { arg msg;
       var index = msg[1].asInteger;
       var value = msg[2].asFloat;
+      var param;
+      
+      if(index.inclusivelyBetween(1, 8).not, {
+        "Invalid parameter index: %".format(index).warn;
+        ^this;
+      });
+      
+      // Get parameter name based on index
+      param = switch(index,
+        1, { \harmonic },
+        2, { \orbital },
+        3, { \symmetry },
+        4, { \resonance },
+        5, { \radiance },
+        6, { \flow },
+        7, { \propagation },
+        8, { \reflection }
+      );
+      
+      // Clamp value to valid range
+      value = clampValue.(param, value);
       
       // Update parameter value
-      switch(index,
-        1, { params[\harmonic] = value; synths[\voice].set(\harmonic, value); },
-        2, { params[\orbital] = value; synths[\voice].set(\orbital, value); },
-        3, { params[\symmetry] = value; synths[\voice].set(\symmetry, value); },
-        4, { params[\resonance] = value; synths[\voice].set(\resonance, value); },
-        5, { params[\radiance] = value; synths[\voice].set(\radiance, value); },
-        6, { params[\flow] = value; synths[\voice].set(\flow, value); },
-        7, { params[\propagation] = value; synths[\voice].set(\propagation, value); },
-        8, { params[\reflection] = value; synths[\voice].set(\reflection, value); }
-      );
+      params[param] = value;
+      
+      // If synth exists, update it
+      if(synths[\voice].notNil, {
+        synths[\voice].set(param, value);
+      });
     });
     
     // Command to trigger a pulse response
     this.addCommand("pulse", "if", { arg msg;
       var target = msg[1].asInteger;
       var strength = msg[2].asFloat;
+      
+      if(target.inclusivelyBetween(1, 8).not, {
+        "Invalid pulse target: %".format(target).warn;
+        ^this;
+      });
+      
+      strength = strength.clip(0, 1);
       
       Synth.new(\pulse_response, [
         \out, context.out_b.index,
@@ -243,11 +294,19 @@ Engine_Refract : CroneEngine {
     this.addCommand("freeze", "i", { arg msg;
       var state = msg[1].asInteger;
       
+      if(state != 0 && state != 1, {
+        "Invalid freeze state: %, must be 0 or 1".format(state).warn;
+        ^this;
+      });
+      
       params[\freeze] = state;
       
       if(state == 1, {
         // Freeze the synth by setting gate to 0 but not freeing it
-        synths[\voice].set(\gate, 0);
+        if(synths[\voice].notNil, {
+          synths[\voice].set(\gate, 0);
+        });
+        
         // Create a new sustained drone
         synths[\drone] = Synth.new(\fm_voice, [
           \out, bus[\fx].index,
@@ -284,24 +343,66 @@ Engine_Refract : CroneEngine {
       });
     });
     
+    // Command to reset parameters to default
+    this.addCommand("reset", "", { 
+      params[\harmonic] = 60;
+      params[\orbital] = 1;
+      params[\symmetry] = 0.5;
+      params[\resonance] = 0.3;
+      params[\radiance] = 0.5;
+      params[\flow] = 1;
+      params[\propagation] = 0.4;
+      params[\reflection] = 0.3;
+      
+      // Update synth if it exists
+      if(synths[\voice].notNil, {
+        synths[\voice].set(
+          \harmonic, params[\harmonic],
+          \orbital, params[\orbital],
+          \symmetry, params[\symmetry],
+          \resonance, params[\resonance],
+          \radiance, params[\radiance],
+          \flow, params[\flow],
+          \propagation, params[\propagation],
+          \reflection, params[\reflection]
+        );
+      });
+    });
+    
     // Register a polling function to send spectral data back to Lua
     this.addPoll("spectral_centroid", {
-      // If we had a spectral centroid calculation, it would go here
-      // For now, just return a random value between 0-1
-      rrand(0.0, 1.0)
+      // For a proper spectral centroid, we'd need to process the FFT
+      // This is simplified for demonstration purposes
+      var signal = Mix.ar(In.ar(bus[\fx].index, 2));
+      var chain = FFT(LocalBuf(1024), signal);
+      SpecCentroid.kr(chain).explin(20, 20000, 0, 1);
     });
     
     this.addPoll("amplitude", {
       // Return the RMS amplitude of the output
       var amp = Amplitude.kr(Mix.ar(In.ar(bus[\fx].index, 2)));
-      amp.poll;
+      amp;
     });
   }
   
   free {
-    // Free all synths and busses
-    synths.do({ arg synth; synth.free; });
-    bus.do({ arg bus; bus.free; });
-    groups.do({ arg group; group.free; });
+    // Free all synths and busses with proper error handling
+    synths.keysValuesDo({ arg key, synth; 
+      if(synth.notNil, { synth.free; });
+    });
+    
+    bus.keysValuesDo({ arg key, b; 
+      if(b.notNil, { b.free; });
+    });
+    
+    groups.keysValuesDo({ arg key, group; 
+      if(group.notNil, { group.free; });
+    });
+    
+    synths = nil;
+    params = nil;
+    bus = nil;
+    groups = nil;
+    operators = nil;
   }
 }
