@@ -4,7 +4,6 @@
 -- Include libraries
 engine.name = "Refract"
 local Mandala = include('lib/mandala')
-local TensionWeb = include('lib/tension_web')
 
 -- Variables for state tracking
 local initialized = false
@@ -12,77 +11,71 @@ local current_param = 1
 local debug_mode = true
 local screen_metro = nil
 local init_clock = nil
-local alt_key_held = false
 
 function init()
   -- Print debug information
   if debug_mode then print("Initializing Refract script") end
+  
+  -- Set up a flag to track initialization state
+  initialized = false
+  
+  -- Set default values
+  current_param = 1
+  alt_key_held = false
+  
+  -- First set up parameters
+  setup_params()
+  
+  -- Instead of showing an initial loading screen,
+  -- let's disable the redraw function until initialized
   
   -- Wait for engine to load before sending commands
   if init_clock then clock.cancel(init_clock) end
   
   init_clock = clock.run(function()
     clock.sleep(0.5)
-    initialized = true
-    if debug_mode then print("Engine initialized") end
-    
-    -- Setup parameters
-    setup_params()
-    
-    -- Initialize TensionWeb
-    TensionWeb.init()
     
     -- Initial state setup - wait a bit longer to ensure engine is fully ready
     clock.sleep(0.5)
     reset_engine()
     
+    -- NOW we're fully initialized
+    initialized = true
     if debug_mode then print("Setup complete") end
+    
+    -- Start the redraw metro only after initialization is complete
+    if screen_metro then screen_metro:stop() end
+    screen_metro = metro.init()
+    screen_metro.time = 1/15
+    screen_metro.event = function() redraw() end
+    screen_metro:start()
   end)
   
-  -- Setup metro for screen redraw
-  if screen_metro then screen_metro:stop() end
-  screen_metro = metro.init()
-  screen_metro.time = 1/15
-  screen_metro.event = function() redraw() end
-  screen_metro:start()
+  -- Do an initial redraw to show loading
+  screen.clear()
+  screen.level(15)
+  screen.move(64, 32)
+  screen.text_center("Loading Refract...")
+  screen.update()
 end
 
 function setup_params()
   params:add_separator("REFRACT")
   
-  -- Add new parameters for tension web control
+  -- Add the pattern_mode, harmony, and coherence parameters
   params:add_option("pattern_mode", "Pattern Mode", {"Radial", "Spiral", "Reflection", "Fractal"}, 1)
-  params:set_action("pattern_mode", function(v) 
-    if initialized then
-      if debug_mode then print("Setting pattern mode: "..v) end
-      TensionWeb.set_pattern(v)
-    end
-  end)
   
   params:add_control("harmony", "Harmony", controlspec.new(0, 1, 'lin', 0.01, 0.5, ""))
-  params:set_action("harmony", function(v) 
-    if initialized then
-      if debug_mode then print("Setting harmony: "..v) end
-      TensionWeb.set_harmony(v)
-    end
-  end)
   
   params:add_control("coherence", "Coherence", controlspec.new(0, 1, 'lin', 0.01, 0.7, ""))
-  params:set_action("coherence", function(v) 
-    if initialized then
-      if debug_mode then print("Setting coherence: "..v) end
-      TensionWeb.set_coherence(v)
-    end
-  end)
   
   -- Original sound parameters
   params:add_control("harmonic", "Harmonic", controlspec.new(20, 120, 'lin', 0.1, 60, ""))
   params:set_action("harmonic", function(v) 
     if initialized then
       if debug_mode then print("Setting harmonic: "..v) end
-      engine.controlParam(1, v)
-      -- Connect to tension web
-      TensionWeb.process_param_change("harmonic", v, "user")
+      engine.controlParam(1, v) 
+      print("HARMONIC COMMAND SENT: " .. v)
     end
   end)
   
@@ -90,9 +83,8 @@ function setup_params()
   params:set_action("orbital", function(v) 
     if initialized then
       if debug_mode then print("Setting orbital: "..v) end
-      engine.controlParam(2, v)
-      -- Connect to tension web
-      TensionWeb.process_param_change("orbital", v, "user")
+      engine.controlParam(2, v) 
+      print("ORBITAL COMMAND SENT: " .. v)
     end
   end)
   
@@ -100,9 +92,8 @@ function setup_params()
   params:set_action("symmetry", function(v) 
     if initialized then
       if debug_mode then print("Setting symmetry: "..v) end
-      engine.controlParam(3, v)
-      -- Connect to tension web
-      TensionWeb.process_param_change("symmetry", v, "user")
+      engine.controlParam(3, v) 
+      print ("SYMMETRY COMMAND SENT: " .. v")
     end
   end)
   
@@ -110,9 +101,8 @@ function setup_params()
   params:set_action("resonance", function(v) 
     if initialized then
       if debug_mode then print("Setting resonance: "..v) end
-      engine.controlParam(4, v)
-      -- Connect to tension web
-      TensionWeb.process_param_change("resonance", v, "user")
+      engine.controlParam(4, v) 
+      print ("RESONANCE COMMAND SENT: " .. v)
     end
   end)
   
@@ -120,9 +110,8 @@ function setup_params()
   params:set_action("radiance", function(v) 
     if initialized then
       if debug_mode then print("Setting radiance: "..v) end
-      engine.controlParam(5, v)
-      -- Connect to tension web
-      TensionWeb.process_param_change("radiance", v, "user")
+      engine.controlParam(5, v) 
+      print ("RESONANCE COMMAND SENT: " .. v)
     end
   end)
   
@@ -130,9 +119,8 @@ function setup_params()
   params:set_action("flow", function(v) 
     if initialized then
       if debug_mode then print("Setting flow: "..v) end
-      engine.controlParam(6, v)
-      -- Connect to tension web
-      TensionWeb.process_param_change("flow", v, "user")
+      engine.controlParam(6, v) 
+      print ("FLOW COMMAND SENT: " .. v)
     end
   end)
   
@@ -140,9 +128,8 @@ function setup_params()
   params:set_action("propagation", function(v) 
     if initialized then
       if debug_mode then print("Setting propagation: "..v) end
-      engine.controlParam(7, v)
-      -- Connect to tension web
-      TensionWeb.process_param_change("propagation", v, "user")
+      engine.controlParam(7, v) 
+      print ("PROPAGATION COMMAND SENT: " .. v")
     end
   end)
   
@@ -151,8 +138,7 @@ function setup_params()
     if initialized then
       if debug_mode then print("Setting reflection: "..v) end
       engine.controlParam(8, v)
-      -- Connect to tension web
-      TensionWeb.process_param_change("reflection", v, "user")
+      print ("REFLECTION COMMAND SENT: " .. v)
     end
   end)
   
@@ -160,9 +146,8 @@ function setup_params()
   params:set_action("freeze", function(v) 
     if initialized then
       if debug_mode then print("Setting freeze: "..v) end
-      engine.freeze(v)
-      -- Also freeze the tension web
-      TensionWeb.set_frozen(v == 1)
+      engine.freeze(v) 
+      print ("FREEZE COMMAND SENT: " .. v")
     end
   end)
   
@@ -177,6 +162,8 @@ function reset_engine()
 end
 
 function key(n, z)
+  if not initialized and n ~= 1 then return end
+  
   if n == 1 then
     -- Handle alt key
     alt_key_held = z == 1
@@ -206,6 +193,8 @@ function key(n, z)
 end
 
 function enc(n, d)
+  if not initialized then return end
+  
   if alt_key_held then
     -- Alt+encoder combinations
     if n == 1 then
@@ -229,7 +218,7 @@ function enc(n, d)
                          "radiance", "flow", "propagation", "reflection"}
       local param_id = param_names[current_param]
       
-      if param_id then
+      if param_id and params:get(param_id) ~= nil then
         if n == 2 then
           -- Coarse adjustment
           params:delta(param_id, d)
@@ -246,66 +235,45 @@ end
 function redraw()
   screen.clear()
   
-  -- Get current pattern name for display
-  local pattern_names = {"Radial", "Spiral", "Reflection", "Fractal"}
-  local current_pattern = pattern_names[params:get("pattern_mode")]
+  -- During initialization, just show loading
+  if not initialized then
+    screen.level(15)
+    screen.move(64, 32)
+    screen.text_center("Initializing Refract...")
+    screen.update()
+    return
+  end
   
-  -- Draw parameter name and value
+  -- After initialization, show the current parameter
   local param_names = {"harmonic", "orbital", "symmetry", "resonance", 
-                       "radiance", "flow", "propagation", "reflection"}
+                     "radiance", "flow", "propagation", "reflection"}
   local param_display_names = {"Harmonic", "Orbital", "Symmetry", "Resonance", 
-                              "Radiance", "Flow", "Propagation", "Reflection"}
+                            "Radiance", "Flow", "Propagation", "Reflection"}
   
   local param_id = param_names[current_param]
   local param_name = param_display_names[current_param]
   
-  -- Display pattern mode at top
-  screen.level(5)
-  screen.move(64, 7)
-  screen.text_center("Mode: " .. current_pattern)
+  screen.level(15)
+  screen.move(64, 15)
+  screen.text_center(param_name)
   
-  -- Show if currently using alt controls
-  if alt_key_held then
-    screen.level(15)
-    screen.move(5, 7)
-    screen.text("ALT")
-  end
+  screen.level(10)
+  screen.move(64, 30)
+  screen.text_center(string.format("%.2f", params:get(param_id)))
   
-  -- Draw harmony and coherence values when in alt mode
-  if alt_key_held then
-    screen.level(15)
-    screen.move(5, 20)
-    screen.text("Harmony: " .. string.format("%.2f", params:get("harmony")))
-    screen.move(5, 30)
-    screen.text("Coherence: " .. string.format("%.2f", params:get("coherence")))
-  end
-  
-  if param_id and param_name then
-    -- Draw parameter name and value
-    if not alt_key_held then
-      screen.level(15)
-      screen.move(64, 20)
-      screen.text_center(param_name)
-      
-      screen.level(10)
-      screen.move(64, 30)
-      screen.text_center(string.format("%.2f", params:get(param_id)))
-    end
-    
-    -- Draw visualization if Mandala.draw exists
-    if Mandala and Mandala.draw then
-      Mandala.draw(
-        params:get("harmonic"), 
-        params:get("orbital"),
-        params:get("symmetry"), 
-        params:get("resonance"),
-        params:get("radiance"), 
-        params:get("flow"),
-        params:get("propagation"), 
-        params:get("reflection"),
-        current_param
-      )
-    end
+  -- Draw visualization
+  if Mandala and Mandala.draw then
+    Mandala.draw(
+      params:get("harmonic"), 
+      params:get("orbital"),
+      params:get("symmetry"), 
+      params:get("resonance"),
+      params:get("radiance"), 
+      params:get("flow"),
+      params:get("propagation"), 
+      params:get("reflection"),
+      current_param
+    )
   end
   
   screen.update()
@@ -315,12 +283,6 @@ function cleanup()
   -- Stop any running processes
   if screen_metro then screen_metro:stop() end
   if init_clock then clock.cancel(init_clock) end
-  
-  -- Clean up Tension Web processes
-  if TensionWeb and TensionWeb.prop_clock then
-    clock.cancel(TensionWeb.prop_clock)
-  end
-  
   init_clock = nil
   initialized = false
 end
