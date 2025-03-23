@@ -43,15 +43,15 @@ Engine_Refract : CroneEngine {
       );
       
       // Apply filter based on resonance
-      sig = RLPF.ar(sig, carrier_freq * resonance.linexp(0, 1, 1, 8), 0.5);
+      sig = RLPF.ar(sig, carrier_freq * resonance.linexp(0, 1, 1, 8) * (1 + (SinOsc.kr(propagation * 5) * 0.5)), 0.5);
       
       // Apply envelope
       env = EnvGen.kr(
         Env.adsr(
-          flow.linexp(0.25, 4, 0.01, 0.5),
-          flow.linexp(0.25, 4, 0.05, 0.5),
+          flow.linexp(0.25, 4, 0.01, 2),
+          flow.linexp(0.25, 4, 0.05, 2),
           0.7,
-          flow.linexp(0.25, 4, 0.05, 0.5)
+          flow.linexp(0.25, 4, 0.05, 2)
         ), 
         gate, 
         doneAction: 2
