@@ -3,9 +3,15 @@
 
 -- Include libraries
 engine.name = "Refract"
-local Mandala = include('lib/mandala')
 local TensionWeb = include('lib/tension_web')
 local RhythmEngine = include('lib/rhythm_engine')
+
+-- New views for better visualization
+VIEW = {
+  PARAMS = 1,  -- Show all param values cleanly
+  VISUALIZER = 2 -- Abstract visualization
+}
+current_view = VIEW.VISUALIZER -- Default to visualizer
 
 -- Variables for state tracking
 local initialized = false
@@ -142,16 +148,22 @@ function setup_params()
   end)
   
   -- Original sound parameters
+    params:add_control("output", "Output", controlspec.new(0, 1, 'lin', 0.01, 0.5, ""))
+  params:set_action("output", function(v)
+    if initialized then
+      engine.amp(v)  -- This actually sets the output level
+    end
+  end)
+
   params:add_control("harmonic", "Harmonic", controlspec.new(20, 120, 'lin', 0.1, 60, ""))
   params:set_action("harmonic", function(v) 
-      if initialized then
-    if debug_mode and math.random() < 0.2 then 
-      print("Setting harmonic: " .. v) 
+    if initialized then
+      if debug_mode and math.random() < 0.2 then 
+        print("Setting harmonic: " .. v) 
+      end
+      engine.controlParam(1, v) 
+      TensionWeb.process_param_change("harmonic", v, "user")
     end
-    engine.controlParam(1, v) 
-    TensionWeb.process_param_change("harmonic", v, "user")
-  end
-
   end)
   
   params:add_control("orbital", "Orbital", controlspec.new(0.25, 4, 'exp', 0.01, 1, ""))
@@ -256,218 +268,54 @@ function reset_engine()
   end
 end
 
-function key(n, z)
-  if not initialized and n ~= 1 then return end
+function key(n,z)
+  if not initialized then return end
   
   if n == 1 then
-    -- Handle alt key
     alt_key_held = z == 1
-  elseif z == 1 then -- on key down
-    local current_tab = Mandala.get_current_tab()
-    
-    if debug_mode then print("Key press: K" .. n .. ", tab: " .. current_tab) end
-    
-    -- Safety check - force tab to valid value if somehow invalid
-    if current_tab < 1 or current_tab > 4 then
-      if debug_mode then print("Correcting invalid tab: " .. current_tab) end
-      Mandala.set_tab(1)
-      current_tab = 1
-    end
-    
-    if alt_key_held then
-      -- Alt+key combinations
-      if n == 2 then
-        -- Alt+K2: Freeze/unfreeze the system
-        local freeze_state = params:get("freeze")
-        params:set("freeze", freeze_state == 1 and 0 or 1)
-      elseif n == 3 then
-        -- Alt+K3: Reset system to defaults
-        reset_engine()
-      end
-    else
-      -- Normal key functions
-      if n == 2 then
-        -- K2: Always navigates to previous tab, with optional additional action
-        local new_tab = current_tab - 1
-        if new_tab < 1 then new_tab = 4 end
-        
-        if current_tab == 2 then -- RHYTHM tab
-          -- Toggle rhythm on/off if alt isn't held
-          local rhythm_state = params:get("rhythm_active")
-          params:set("rhythm_active", rhythm_state == 1 and 2 or 1)
-        end
-        
-        -- Always navigate regardless of tab
-        Mandala.set_tab(new_tab)
-        if debug_mode then print("Tab changed to: " .. new_tab) end
-      elseif n == 3 then
-        -- K3: Has dual function depending on tab
-        if current_tab == 2 then -- RHYTHM tab
-          -- Cycle through rhythm patterns
-          params:delta("rhythm_pattern", 1)
-        elseif current_tab == 4 then -- TENSION tab
-          -- Cycle through parameters
-          current_param = util.wrap(current_param + 1, 1, 8)
-          -- But ALSO navigate to next tab for consistency
-          local new_tab = current_tab + 1
-          if new_tab > 4 then new_tab = 1 end
-          Mandala.set_tab(new_tab)
-          if debug_mode then print("Tab changed to: " .. new_tab) end
-          return -- early return to avoid double tab change
-        end
-        
-        -- Switch to next tab (all tabs except TENSION already handled above)
-        local new_tab = current_tab + 1
-        if new_tab > 4 then new_tab = 1 end
-        Mandala.set_tab(new_tab)
-        if debug_mode then print("Tab changed to: " .. new_tab) end
-      end
-    end
+  elseif n == 2 and z == 1 then
+    -- K2: Toggle between views
+    current_view = current_view == VIEW.PARAMS and VIEW.VISUALIZER or VIEW.PARAMS
     redraw()
+  elseif n == 3 and z == 1 then
+    if alt_key_held then
+      -- Alt+K3: Reset to defaults
+      reset_engine()
+    else
+      -- K3: Something else (maybe freeze?)
+      params:delta("freeze", 1)
+    end
   end
 end
 
 function enc(n, d)
   if not initialized then return end
   
-  -- Get current tab
-  local current_tab = Mandala.get_current_tab()
-  
-  -- Add debug print to track encoder action
-  if debug_mode and n == 1 and math.abs(d) > 0 then 
-    print("Encoder " .. n .. " (value " .. d .. ") on tab " .. current_tab)
-  end
-  
-  -- Safety check - force tab to valid value if somehow invalid
-  if current_tab < 1 or current_tab > 4 then
-    if debug_mode then print("Correcting invalid tab: " .. current_tab) end
-    Mandala.set_tab(1)
-    current_tab = 1
-  end
-  
-  if current_tab == 2 then -- RHYTHM tab
-    if alt_key_held then
-      -- Alt+encoder combinations in rhythm tab
-      if n == 1 then
-        -- Alt+E1: Rhythm On/Off
-        params:delta("rhythm_active", d)
-      elseif n == 2 then
-        -- Alt+E2: Change tabs directly (safety feature)
-        if d > 0 then
-          local new_tab = current_tab + 1
-          if new_tab > 4 then new_tab = 1 end
-          Mandala.set_tab(new_tab)
-          if debug_mode then print("Alt+E2: Tab changed to: " .. new_tab) end
-        else
-          local new_tab = current_tab - 1
-          if new_tab < 1 then new_tab = 4 end
-          Mandala.set_tab(new_tab)
-          if debug_mode then print("Alt+E2: Tab changed to: " .. new_tab) end
-        end
-      elseif n == 3 then
-        -- Alt+E3: Advanced rhythm settings 
-        -- For now just reset to tab 1 as a safety valve
-        Mandala.set_tab(1)
-        if debug_mode then print("Alt+E3: Tab changed to: 1") end
-      end
-    else
-      -- Normal encoder functions for rhythm tab
-      if n == 1 then
-        -- E1: Select rhythm pattern, but also allow tab change with big movements
-        if d > 2 then
-          -- Large clockwise movement changes tab
-          local new_tab = current_tab + 1
-          if new_tab > 4 then new_tab = 1 end
-          Mandala.set_tab(new_tab)
-          if debug_mode then print("Emergency tab change: " .. new_tab) end
-        elseif d < -2 then
-          -- Large counter-clockwise movement changes tab
-          local new_tab = current_tab - 1
-          if new_tab < 1 then new_tab = 4 end
-          Mandala.set_tab(new_tab)
-          if debug_mode then print("Emergency tab change: " .. new_tab) end
-        else
-          -- Normal behavior
-          params:delta("rhythm_pattern", d)
-        end
-      elseif n == 2 then
-        -- E2: Adjust rhythm rate
-        params:delta("rhythm_rate", d * 0.01)
-      elseif n == 3 then
-        -- E3: Adjust rhythm depth
-        params:delta("rhythm_depth", d * 0.01)
-      end
-    end
-  
-  elseif current_tab == 4 then -- TENSION tab
-    if alt_key_held then
-      -- Alt+encoder combinations
-      if n == 1 then
-        -- Alt+E1: Pattern Mode
-        params:delta("pattern_mode", d)
-      elseif n == 2 then
-        -- Alt+E2: Harmony
-        params:delta("harmony", d * 0.01)
-      elseif n == 3 then
-        -- Alt+E3: Coherence
-        params:delta("coherence", d * 0.01)
-      end
-    else
-      -- Normal encoder functions
-      if n == 1 then
-        -- E1: Change current parameter or tab with large movements
-        if d > 2 then
-          -- Large clockwise movement changes tab
-          local new_tab = current_tab + 1
-          if new_tab > 4 then new_tab = 1 end
-          Mandala.set_tab(new_tab)
-          if debug_mode then print("Emergency tab change: " .. new_tab) end
-        elseif d < -2 then
-          -- Large counter-clockwise movement changes tab
-          local new_tab = current_tab - 1
-          if new_tab < 1 then new_tab = 4 end
-          Mandala.set_tab(new_tab)
-          if debug_mode then print("Emergency tab change: " .. new_tab) end
-        else
-          -- Normal parameter selection
-          current_param = util.wrap(current_param + d, 1, 8)
-        end
-      else
-        -- Map encoder 2 & 3 to the current parameter
-        local param_names = {"harmonic", "orbital", "symmetry", "resonance", 
-                           "radiance", "flow", "propagation", "reflection"}
-        local param_id = param_names[current_param]
-        
-        if param_id and params:get(param_id) ~= nil then
-          if n == 2 then
-            -- Coarse adjustment
-            params:delta(param_id, d)
-          elseif n == 3 then
-            -- Fine adjustment
-            params:delta(param_id, d * 0.1)
-          end
-        end
-      end
+  if alt_key_held then
+    -- Alt + encoder controls
+    if n == 1 then
+      params:delta("pattern_mode", d)
+    elseif n == 2 then
+      params:delta("harmony", d * 0.01)
+    elseif n == 3 then
+      params:delta("coherence", d * 0.01)
     end
   else
-    -- For other tabs, add safety valve for tab navigation
+    -- Regular encoder controls
     if n == 1 then
-      -- E1: Allow tab navigation with encoder 1
-      if d > 0 then
-        local new_tab = current_tab + 1
-        if new_tab > 4 then new_tab = 1 end
-        Mandala.set_tab(new_tab)
-        if debug_mode then print("Tab changed to: " .. new_tab) end
-      elseif d < 0 then
-        local new_tab = current_tab - 1
-        if new_tab < 1 then new_tab = 4 end
-        Mandala.set_tab(new_tab)
-        if debug_mode then print("Tab changed to: " .. new_tab) end
-      end
+      params:delta("output", d * 0.01)
     elseif n == 2 then
-      -- E2: Placeholder
+      if rhythm_active then
+        params:delta("rhythm_rate", d * 0.01)
+      else
+        params:delta("harmonic", d) -- Direct control of pattern segments
+      end
     elseif n == 3 then
-      -- E3: Placeholder
+      if rhythm_active then
+        params:delta("rhythm_depth", d * 0.01)
+      else
+        params:delta("resonance", d * 0.01) -- Direct control of line brightness
+      end
     end
   end
   
@@ -497,9 +345,6 @@ function test_tension_web()
   end)
 end
 
--- Define HEADER_HEIGHT for use in drawing functions
-HEADER_HEIGHT = 10
-
 function redraw()
   screen.clear()
   
@@ -512,92 +357,126 @@ function redraw()
     return
   end
   
-  -- Get current tab
-  local current_tab = Mandala.get_current_tab()
-  
-  -- Draw based on current tab
-  if current_tab == 2 then -- RHYTHM tab
-    draw_rhythm_tab()
-  else 
-    -- Draw visualization for other tabs
-    if Mandala and Mandala.draw then
-      Mandala.draw(
-        params:get("harmonic"), 
-        params:get("orbital"),
-        params:get("symmetry"), 
-        params:get("resonance"),
-        params:get("radiance"), 
-        params:get("flow"),
-        params:get("propagation"), 
-        params:get("reflection"),
-        current_param
-      )
-    end
-    
-    -- Draw relationship lines
-    if current_tab == 4 then -- Only on TENSION tab
-      local active_relationships = TensionWeb.get_active_relationships()
-      Mandala.draw_relationships(active_relationships)
-    end
+  if current_view == VIEW.PARAMS then
+    draw_params_view()
+  else
+    draw_visualizer()
   end
-  
-  screen.update()
 end
 
--- Draw rhythm tab contents
-function draw_rhythm_tab()
-  -- Main title
+-- Add these new drawing functions
+function draw_params_view()
   screen.level(15)
-  screen.move(64, HEADER_HEIGHT + 7)
-  screen.text_center("RHYTHM")
   
-  local active_text = rhythm_active and "ACTIVE" or "INACTIVE"
-  local active_level = rhythm_active and 15 or 5
-  screen.level(active_level)
-  screen.move(64, HEADER_HEIGHT + 16)
-  screen.text_center(active_text)
+  -- Draw 4 params per column, 2 columns
+  local col1_x = 5
+  local col2_x = 70
+  local y_start = 12
+  local y_spacing = 13
   
-  -- Display current rhythm settings
-  screen.level(10)
-  -- Pattern
-  screen.move(32, 32)
-  screen.text_center("Pattern")
-  screen.move(32, 40)
-  screen.level(rhythm_active and 15 or 7)
-  screen.text_center(params:string("rhythm_pattern"))
-  
-  -- Rate
-  screen.level(10)
-  screen.move(96, 32)
-  screen.text_center("Rate")
-  screen.move(96, 40)
-  screen.level(rhythm_active and 15 or 7)
-  screen.text_center(string.format("%.2f", params:get("rhythm_rate")) .. "x")
-  
-  -- Depth
-  screen.level(10)
-  screen.move(64, 50)
-  screen.text_center("Depth")
-  screen.move(64, 58)
-  screen.level(rhythm_active and 15 or 7)
-  screen.text_center(string.format("%.0f%%", params:get("rhythm_depth") * 100))
-  
-  -- Draw rhythm pulse indicator
-  if rhythm_active then
-    local phase = RhythmEngine.get_phase() -- 0-1 value
-    local indicator_width = 60
-    local x_center = 64
-    local y_pos = 25
-    local indicator_x = x_center - indicator_width/2 + phase * indicator_width
-    
-    screen.level(15)
-    screen.move(indicator_x, y_pos)
-    screen.line_width(2)
-    screen.line_rel(0, 3)
-    screen.stroke()
-    screen.line_width(1)
+  -- First column
+  for i=1,4 do
+    local param = TensionWeb.PARAM_NAMES[i]
+    local value = params:get(param)
+    screen.move(col1_x, y_start + (i-1)*y_spacing)
+    screen.text(param:sub(1,3) .. ": " .. string.format("%.2f", value))
   end
+  
+  -- Second column  
+  for i=5,8 do
+    local param = TensionWeb.PARAM_NAMES[i]
+    local value = params:get(param)
+    screen.move(col2_x, y_start + (i-5)*y_spacing)
+    screen.text(param:sub(1,3) .. ": " .. string.format("%.2f", value))
+  end
+
+  -- Draw small status indicators at bottom
+  screen.level(5)
+  screen.move(5, 60)
+  screen.text("Pattern: " .. params:get("pattern_mode"))
+  screen.move(70, 60)
+  screen.text(rhythm_active and "R" or "-")
 end
+
+function draw_visualizer()
+    screen.aa(1) -- Enable anti-aliasing for smoother lines
+  screen.level(15) -- Set default brightness
+
+  
+  -- Center coordinates
+  local cx, cy = 64, 32
+  local max_radius = 30
+  
+  -- Use harmonic parameter to determine number of segments
+  local segments = math.floor(util.linlin(20, 120, 4, 16, params:get("harmonic")))
+  
+  -- Use symmetry parameter to determine number of rings
+  local rings = math.floor(util.linlin(0, 1, 2, 6, params:get("symmetry")))
+  
+  -- Use orbital parameter for rotation
+  local rotation = util.linlin(0, 1, 0, math.pi*2, params:get("orbital"))
+  
+  -- Loop through rings
+  for r = 1, rings do
+    local ring_radius = (r/rings) * max_radius
+    
+    -- Draw segments
+    for s = 1, segments do
+      local angle = (s/segments) * math.pi * 2 + rotation
+      local next_angle = ((s+1)/segments) * math.pi * 2 + rotation
+      
+      -- Calculate points for cross pattern
+      local x1 = cx + math.cos(angle) * ring_radius
+      local y1 = cy + math.sin(angle) * ring_radius
+      local x2 = cx + math.cos(next_angle) * (ring_radius * 0.8)
+      local y2 = cy + math.sin(next_angle) * (ring_radius * 0.8)
+      
+      -- Use resonance to determine line brightness
+      local brightness = math.floor(util.linlin(0, 1, 2, 15, params:get("resonance")))
+screen.level(brightness)
+      
+      -- Draw crossing lines
+      screen.move(x1, y1)
+      screen.line(x2, y2)
+      
+      -- Add perpendicular lines based on radiance
+      if params:get("radiance") > 0.5 then
+        local perp_length = ring_radius * 0.2
+        local mid_angle = (angle + next_angle) / 2
+        local px = cx + math.cos(mid_angle) * (ring_radius * 0.9)
+        local py = cy + math.sin(mid_angle) * (ring_radius * 0.9)
+        screen.move(px - math.sin(mid_angle) * perp_length, 
+                   py + math.cos(mid_angle) * perp_length)
+        screen.line(px + math.sin(mid_angle) * perp_length,
+                   py - math.cos(mid_angle) * perp_length)
+      end
+    end
+  end
+  
+  -- Draw central element
+  local center_size = util.linlin(0, 1, 2, 8, params:get("flow"))
+  for i = 1, 4 do
+    local angle = (i/4) * math.pi * 2
+    screen.move(cx, cy)
+    screen.line(cx + math.cos(angle) * center_size,
+                cy + math.sin(angle) * center_size)
+  end
+  
+  -- Add pulsing elements for rhythm if active
+  if rhythm_active then
+    local phase = RhythmEngine.get_phase()
+    local pulse_radius = math.floor(max_radius + 2 + math.sin(phase * math.pi * 2) * 3)
+    for i = 1, 8 do
+      local angle = (i/8) * math.pi * 2
+      local x = cx + math.cos(angle) * pulse_radius
+      local y = cy + math.sin(angle) * pulse_radius
+      screen.pixel(x, y)
+    end
+  end
+  
+  screen.stroke()
+end
+
 
 function cleanup()
   -- Stop any running processes
